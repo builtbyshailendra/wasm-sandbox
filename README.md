@@ -39,3 +39,37 @@ Grants open exactly one thing each: `DataDir` mounts one host directory read-onl
 Checking the tests catch what they claim: with `WithCloseOnContextDone` switched off, the infinite-loop test never finished (the test binary was killed at 40 s). It stops the loop; the context deadline alone doesn't.
 
 What broke: nothing in the tests on the first run.
+
+### Step 2: speed, and a command-line tool
+
+`cmd/sandbox`: `sandbox run [-timeout 2s] [-memory 64] [-max-output N] [-data DIR] [-real-clock] [-kv key=value] plugin.wasm < input.json`. Exit status is the plugin's own code, or 124 for a timeout, 125 for the memory or output limit, 126 for a trap. Compiled machine code is kept in a disk cache between runs.
+
+Run on this laptop:
+
+```text
+$ echo '{"text":"to be or not to be"}' | sandbox run wordcount.wasm     # first time
+{"lines":1,"top":[{"word":"be","count":2},{"word":"to","count":2},{"word":"not","count":1}],"words":6}
+sandbox: ok, load 2.34s, run 12ms
+$ (the same again)                                                    # cache warm
+sandbox: ok, load 133ms, run 14ms
+$ echo '{"mode":"loop"}' | sandbox run -timeout 500ms hostile.wasm
+sandbox: timeout, load 2.543s, run 500ms                              # exit status 124
+$ echo '{"keys":["region"]}' | sandbox run kvuser.wasm
+sandbox: kvuser.wasm needs the "kv" capability (it imports sandbox.kv_get), which wasn't granted
+$ echo '{"keys":["region"]}' | sandbox run -kv region=ap-south-1 kvuser.wasm
+{"region":"ap-south-1"}
+```
+
+Benchmarks (`go test -bench . -count 3`, Intel i5-10310U, Windows; ranges are the three runs):
+
+| What | Time |
+|---|---|
+| compile `wordcount` (4.5 MB of Wasm built by Go) to machine code | 3.9–4.2 s |
+| load it from a warm disk cache (as a new process would) | 187–191 ms |
+| one run: new instance, the Go runtime starting inside it, the work | 13–16 ms |
+| start a reactor instance (`adder`) | 5.6–6.3 ms |
+| call a function on a live reactor instance | about 7 µs |
+
+So: compile once and cache it; a fresh instance per run costs milliseconds, mostly the guest's own Go runtime starting (a TinyGo or Rust guest would be much smaller and faster to start); keeping an instance alive makes calls almost free but shares state between calls, so only do that per caller. The disk cache held 54 MB for three modules.
+
+What broke: the CLI's summary line printed wazero's internal exit code for a timeout (4026531839, which is `0xefffffff`). It now prints the outcome, and an exit code only when the plugin chose it.
