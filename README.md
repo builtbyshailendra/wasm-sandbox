@@ -2,7 +2,37 @@
 
 Runs untrusted code (a third-party plugin, or a tool an AI agent wrote) inside WebAssembly, with hard limits. By default a plugin gets nothing but its input: no files, no environment variables, no network, no real clock, no real randomness, and it is stopped when it runs too long, uses too much memory, or prints too much.
 
-Status: built step by step, locally. Not published.
+```go
+p, err := sandbox.Load(ctx, "wordcount", wasmBytes,
+    sandbox.Limits{Timeout: time.Second, MemoryMiB: 64, MaxOutput: 1 << 20},
+    sandbox.Grants{}, // nothing extra; add DataDir, RealClock or KV to open one thing each
+    cache)
+r := p.Run(ctx, []byte(`{"text":"..."}`)) // r.Outcome: ok, exited, timeout, memory_limit, output_limit, trap
+```
+
+Go 1.27 · [wazero](https://wazero.io) 1.12 (pure-Go WebAssembly runtime) · WASI preview 1 · Go's `wasip1` target, `//go:wasmimport` and `//go:wasmexport`. Personal learning project, built pairing with Claude Code.
+
+## Why WebAssembly for this
+
+A container is the usual answer to "run this code I don't trust", but it shares the host kernel, takes hundreds of milliseconds to start, and its isolation depends on configuration. A WebAssembly module can only touch memory it was given and call functions it imports; everything else, files, network and time included, exists only if the host provides it. Here that's checked before the code runs, and a fresh instance costs milliseconds.
+
+The trade-off: the plugin has to be compiled to WebAssembly (Go, Rust, C, TinyGo, AssemblyScript and others can), and WASI preview 1 has no networking or threads.
+
+## Try it
+
+```bash
+go test ./...                    # builds the guest plugins to Wasm, then runs every test
+go test -run '^$' -bench . ./sandbox/
+go build -o bin/ ./cmd/sandbox && GOOS=wasip1 GOARCH=wasm go build -o bin/wordcount.wasm ./guests/wordcount
+echo '{"text":"to be or not to be"}' | ./bin/sandbox run bin/wordcount.wasm
+```
+
+## What it doesn't do
+
+- **Side channels and resource fairness across tenants.** Each run has its own limits, but nothing stops a hundred callers from running a hundred plugins at once. A real service would queue and rate-limit.
+- **CPU limit = wall-clock limit.** wazero has no instruction metering ("fuel"); a plugin is stopped by time, not by instructions executed.
+- **Host functions are the attack surface.** `kv_get` bounds-checks every read and write of guest memory; every new capability needs the same care.
+- **Not tried with non-Go guests.** Rust or TinyGo plugins should work (same WASI interface) but weren't tested.
 
 ## Build log
 
@@ -73,3 +103,9 @@ Benchmarks (`go test -bench . -count 3`, Intel i5-10310U, Windows; ranges are th
 So: compile once and cache it; a fresh instance per run costs milliseconds, mostly the guest's own Go runtime starting (a TinyGo or Rust guest would be much smaller and faster to start); keeping an instance alive makes calls almost free but shares state between calls, so only do that per caller. The disk cache held 54 MB for three modules.
 
 What broke: the CLI's summary line printed wazero's internal exit code for a timeout (4026531839, which is `0xefffffff`). It now prints the outcome, and an exit code only when the plugin chose it.
+
+### Step 3: docs and CI
+
+This README, `LEARN.md`, and `.github/workflows/ci.yml` (vet, gofmt, tests including building the guests). **The workflow has not run**: the project isn't published.
+
+Where it stands: 3 local commits, 11 tests passing, CLI tried by hand. Not published.
