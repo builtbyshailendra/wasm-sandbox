@@ -1,5 +1,7 @@
 # wasm-sandbox
 
+[![ci](https://github.com/builtbyshailendra/wasm-sandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/builtbyshailendra/wasm-sandbox/actions/workflows/ci.yml)
+
 Runs untrusted code (a third-party plugin, or a tool an AI agent wrote) inside WebAssembly, with hard limits. By default a plugin gets nothing but its input: no files, no environment variables, no network, no real clock, no real randomness, and it is stopped when it runs too long, uses too much memory, or prints too much.
 
 ```go
@@ -106,6 +108,6 @@ What broke: the CLI's summary line printed wazero's internal exit code for a tim
 
 ### Step 3: docs and CI
 
-This README, `LEARN.md`, and `.github/workflows/ci.yml` (vet, gofmt, tests including building the guests). **The workflow has not run**: the project isn't published.
+This README, `LEARN.md`, and `.github/workflows/ci.yml` (vet, gofmt, tests including building the guests). It runs on every push (badge above).
 
-Where it stands: 3 local commits, 11 tests passing, CLI tried by hand. Not published.
+Where it stands: 11 tests passing, locally and in CI; CLI tried by hand. Published 20 Nov 2026.
